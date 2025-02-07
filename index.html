@@ -26,8 +26,16 @@
                 {id: 15, x: 100, y: 500},
                 {id: 16, x: 150, y: 500},
                 {id: 17, x: 200, y: 500},
-                
-
+                {id: 18, x: 100, y: 550},
+                {id: 19, x: 150, y: 550},
+                {id: 20, x: 200, y: 550},
+                {id: 21, x: 250, y: 550},
+                {id: 22, x: 275, y: 525},
+                {id: 23, x: 100, y: 600},
+                {id: 24, x: 150, y: 600},
+                {id: 25, x: 200, y: 600},
+                {id: 26, x: 250, y: 600},
+                {id: 27, x: 275, y: 575}
             ],
             edges: [
                 {source: 0, target: 1},
@@ -55,17 +63,38 @@
                 {source: 10, target: 13},
                 {source: 15, target: 16},
                 {source: 16, target: 17},
-
+                {source: 15, target: 18},
+                {source: 16, target: 19},
+                {source: 17, target: 20},
+                {source: 19, target: 20},
+                {source: 18, target: 19},
+                {source: 20, target: 21},
+                {source: 21, target: 22},
+                {source: 18, target: 23},
+                {source: 19, target: 24},
+                {source: 20, target: 25},
+                {source: 23, target: 24},
+                {source: 24, target: 25},
+                {source: 25, target: 26},
+                {source: 21, target: 26},
+                {source: 26, target: 27},
+                {source: 22, target: 27}
             ]
         };
 
         const width = 300;
-        const height = 600;
+        const height = 900;
         const svg = d3.select("#graph")
             .append("svg")
             .attr("width", width)
             .attr("height", height)
             .attr("class", "scrollable-graph");
+
+        const usedEdges = new Set();
+        const vertexConnections = new Map();
+        const selectedEdges = new Set();
+
+        graph.vertices.forEach(v => vertexConnections.set(v.id, 0));
 
         const edges = svg.selectAll("line")
             .data(graph.edges)
@@ -75,9 +104,11 @@
             .attr("y1", d => graph.vertices.find(v => v.id === d.source).y)
             .attr("x2", d => graph.vertices.find(v => v.id === d.target).x)
             .attr("y2", d => graph.vertices.find(v => v.id === d.target).y)
-            .attr("stroke", "gray")
-            .attr("stroke-width", 2)
-            .attr("class", "edge");
+            .attr("stroke", "lightgray")
+            .attr("stroke-width", 1)
+            .attr("class", "edge")
+            .attr("data-source", d => d.source)
+            .attr("data-target", d => d.target);
 
         const vertices = svg.selectAll("circle")
             .data(graph.vertices)
@@ -105,40 +136,87 @@
         const selectedPath = [];
         const pathList = d3.select("#path-list");
 
+        function findEdgeInSet(set, source, target) {
+            return Array.from(set).find(edge => 
+                (edge.source === source && edge.target === target) ||
+                (edge.source === target && edge.target === source)
+            );
+        }
+
+        function removeEdgeFromSet(set, source, target) {
+            const edge = findEdgeInSet(set, source, target);
+            if (edge) {
+                set.delete(edge);
+            }
+        }
+
+        function updateEdgeVisibility() {
+            edges.attr("stroke", "lightgray")
+                 .attr("stroke-width", 1);
+
+            selectedEdges.forEach(edge => {
+                edges.filter(d => 
+                    (d.source === edge.source && d.target === edge.target) ||
+                    (d.source === edge.target && d.target === edge.source)
+                )
+                .attr("stroke", "red")
+                .attr("stroke-width", 4);
+            });
+
+            graph.vertices.forEach(v => {
+                const connections = vertexConnections.get(v.id);
+                if (connections >= 2) {
+                    edges.filter(d => 
+                        (d.source === v.id || d.target === v.id) &&
+                        !Array.from(selectedEdges).some(edge => 
+                            (edge.source === d.source && edge.target === d.target) ||
+                            (edge.source === d.target && edge.target === d.source)
+                        )
+                    )
+                    .attr("stroke", "rgba(200,200,200,0.2)")
+                    .attr("stroke-width", 0.5);
+                }
+            });
+        }
+
         vertices.on("click", function() {
             const vertexId = parseInt(d3.select(this).attr("data-id"));
             const isSelected = d3.select(this).classed("selected");
 
-            // Undo last selection if clicking the last selected vertex
             if (selectedPath.length > 0 && vertexId === selectedPath[selectedPath.length - 1]) {
+                // Remove vertex selection
                 svg.selectAll(".vertex")
                     .filter(d => d.id === vertexId)
                     .classed("selected", false);
 
                 if (selectedPath.length > 1) {
-                    const lastVertices = selectedPath.slice(-2);
-                    svg.selectAll(".edge")
-                        .filter(d => 
-                            (d.source === lastVertices[0] && d.target === lastVertices[1]) ||
-                            (d.source === lastVertices[1] && d.target === lastVertices[0])
-                        )
-                        .attr("stroke", "gray")
-                        .attr("stroke-width", 2);
+                    const previousVertex = selectedPath[selectedPath.length - 2];
+                    
+                    // Remove the edge from both sets
+                    removeEdgeFromSet(usedEdges, previousVertex, vertexId);
+                    removeEdgeFromSet(selectedEdges, previousVertex, vertexId);
+                    
+                    // Update vertex connections
+                    vertexConnections.set(previousVertex, 
+                        vertexConnections.get(previousVertex) - 1);
+                    vertexConnections.set(vertexId, 
+                        vertexConnections.get(vertexId) - 1);
                 }
 
                 selectedPath.pop();
                 pathList.html(selectedPath.join(" → "));
+                updateEdgeVisibility();
                 return;
             }
 
-            // Prevent reselecting an already selected vertex
             if (isSelected) return;
 
-            // Check if the selection is valid
             if (selectedPath.length === 0 || 
                 graph.edges.some(e => 
-                    (e.source == selectedPath[selectedPath.length-1] && e.target == vertexId) ||
-                    (e.target == selectedPath[selectedPath.length-1] && e.source == vertexId)
+                    ((e.source == selectedPath[selectedPath.length-1] && e.target == vertexId) ||
+                    (e.target == selectedPath[selectedPath.length-1] && e.source == vertexId)) &&
+                    vertexConnections.get(vertexId) < 2 &&
+                    vertexConnections.get(selectedPath[selectedPath.length-1]) < 2
                 )) {
                 
                 d3.select(this).classed("selected", true);
@@ -146,16 +224,21 @@
                 
                 if (selectedPath.length > 1) {
                     const lastVertices = selectedPath.slice(-2);
-                    svg.selectAll(".edge")
-                        .filter(d => 
-                            (d.source === lastVertices[0] && d.target === lastVertices[1]) ||
-                            (d.source === lastVertices[1] && d.target === lastVertices[0])
-                        )
-                        .attr("stroke", "red")
-                        .attr("stroke-width", 4);
+                    const newEdge = {
+                        source: lastVertices[0],
+                        target: lastVertices[1]
+                    };
+                    usedEdges.add(newEdge);
+                    selectedEdges.add(newEdge);
+                    
+                    vertexConnections.set(lastVertices[0], 
+                        (vertexConnections.get(lastVertices[0]) || 0) + 1);
+                    vertexConnections.set(lastVertices[1], 
+                        (vertexConnections.get(lastVertices[1]) || 0) + 1);
                 }
 
                 pathList.html(selectedPath.join(" → "));
+                updateEdgeVisibility();
             }
         });
     </script>
