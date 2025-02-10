@@ -138,19 +138,53 @@
             ]
         };
 
-        const width = 400;
-        const height = 900;
+        const width = 600, height = 900;
         const svg = d3.select("#graph")
             .append("svg")
             .attr("width", width)
             .attr("height", height)
             .attr("class", "scrollable-graph");
 
-        const usedEdges = new Set();
         const vertexConnections = new Map();
-        const selectedEdges = new Set();
+        const pathData = {
+            'green': { 
+                path: [], 
+                usedEdges: new Set(),
+                lastVertex: null
+            },
+            'orange': { 
+                path: [], 
+                usedEdges: new Set(),
+                lastVertex: null
+            }
+        };
+
+        let currentPath = 'green';
 
         graph.vertices.forEach(v => vertexConnections.set(v.id, 0));
+
+        function findEdge(source, target) {
+            return graph.edges.some(e => 
+                (e.source === source && e.target === target) ||
+                (e.source === target && e.target === source)
+            );
+        }
+
+        function isVertexAvailable(vertexId) {
+            return !['green', 'orange'].some(path => 
+                pathData[path].path.includes(vertexId)
+            );
+        }
+
+        function isValidNextVertex(currentPath, lastVertex, newVertex) {
+            const isConnected = findEdge(lastVertex, newVertex);
+            const withinConnectionLimit = 
+                vertexConnections.get(lastVertex) < 2 && 
+                vertexConnections.get(newVertex) < 2;
+            const vertexAvailable = isVertexAvailable(newVertex);
+
+            return isConnected && withinConnectionLimit && vertexAvailable;
+        }
 
         const edges = svg.selectAll("line")
             .data(graph.edges)
@@ -162,12 +196,10 @@
             .attr("y2", d => graph.vertices.find(v => v.id === d.target).y)
             .attr("stroke", "lightgray")
             .attr("stroke-width", 1)
-            .attr("class", "edge")
-            .attr("data-source", d => d.source)
-            .attr("data-target", d => d.target);
+            .attr("class", "edge");
 
         const vertices = svg.selectAll("circle")
-            .data(graph.vertices)
+            .data(graph.vertices.filter(v => v.id < 47)) // Exclude control vertices
             .enter()
             .append("circle")
             .attr("cx", d => d.x)
@@ -178,7 +210,7 @@
             .attr("data-id", d => d.id);
 
         svg.selectAll(".vertex-label")
-            .data(graph.vertices)
+            .data(graph.vertices.filter(v => v.id < 47)) // Exclude control vertices
             .enter()
             .append("text")
             .attr("x", d => d.x)
@@ -189,143 +221,152 @@
             .attr("pointer-events", "none")
             .attr("fill", "black");
 
-        const selectedPath = [];
-        const pathList = d3.select("#path-list");
+        // Side panel buttons
+        d3.select("#green-switch").on("click", () => {
+            currentPath = 'green';
+            d3.select("#path-mode").text(`Current Path: Green`);
+        });
 
-        function findEdgeInSet(set, source, target) {
-            return Array.from(set).find(edge => 
-                (edge.source === source && edge.target === target) ||
-                (edge.source === target && edge.target === source)
-            );
-        }
+        d3.select("#orange-switch").on("click", () => {
+            currentPath = 'orange';
+            d3.select("#path-mode").text(`Current Path: Orange`);
+        });
 
-        function removeEdgeFromSet(set, source, target) {
-            const edge = findEdgeInSet(set, source, target);
-            if (edge) {
-                set.delete(edge);
-            }
+        d3.select("#reset-button").on("click", () => {
+            ['green', 'orange'].forEach(path => {
+                pathData[path].path = [];
+                pathData[path].usedEdges.clear();
+            });
+            
+            vertexConnections.forEach((v, k) => vertexConnections.set(k, 0));
+            
+            svg.selectAll(".vertex").attr("fill", "lightblue");
+            updatePathDisplay();
+            updateEdgeVisibility();
+            currentPath = 'green';
+            d3.select("#path-mode").text(`Current Path: Green`);
+        });
+
+        function updatePathDisplay() {
+            d3.select("#green-path").text(pathData.green.path.join(" → "));
+            d3.select("#orange-path").text(pathData.orange.path.join(" → "));
         }
 
         function updateEdgeVisibility() {
             edges.attr("stroke", "lightgray")
-                 .attr("stroke-width", 1);
-
-            selectedEdges.forEach(edge => {
-                edges.filter(d => 
-                    (d.source === edge.source && d.target === edge.target) ||
-                    (d.source === edge.target && d.target === edge.source)
-                )
-                .attr("stroke", "red")
-                .attr("stroke-width", 4);
-            });
-
-            graph.vertices.forEach(v => {
-                const connections = vertexConnections.get(v.id);
-                if (connections >= 2) {
-                    edges.filter(d => 
-                        (d.source === v.id || d.target === v.id) &&
-                        !Array.from(selectedEdges).some(edge => 
-                            (edge.source === d.source && edge.target === d.target) ||
-                            (edge.source === d.target && edge.target === d.source)
-                        )
-                    )
-                    .attr("stroke", "rgba(200,200,200,0.2)")
-                    .attr("stroke-width", 0.5);
-                }
+                 .attr("stroke-width", 1)
+                 .attr("opacity", 1);
+            
+            ['green', 'orange'].forEach(pathColor => {
+                const path = pathData[pathColor].path;
+                const usedEdges = pathData[pathColor].usedEdges;
+                const selectedVertices = new Set(path); // Track selected vertices
+                const lastVertex = path[path.length - 1]; // Most recently selected vertex
+                
+                edges.each(function(d) {
+                    const isUsed = [...usedEdges].some(e => 
+                        (e.source === d.source && e.target === d.target) ||
+                        (e.source === d.target && e.target === d.source)
+                    );
+            
+                    if (isUsed) {
+                        // Highlight selected path edges
+                        d3.select(this)
+                            .attr("stroke", pathColor)
+                            .attr("stroke-width", 4)
+                            .attr("opacity", 1);
+                    } else if (selectedVertices.has(d.source) !== selectedVertices.has(d.target)) {
+                        // If one vertex is selected but the other isn't, de-emphasize the edge
+                        d3.select(this)
+                            .attr("opacity", 0.2);
+                    }
+        
+                    // Re-emphasize edges connecting the most recently chosen vertex to non-selected vertices
+                    if ((d.source === lastVertex && !selectedVertices.has(d.target)) ||
+                        (d.target === lastVertex && !selectedVertices.has(d.source))) {
+                        d3.select(this)
+                            .attr("stroke", pathColor)
+                            .attr("stroke-width", 2)
+                            .attr("opacity", 1);
+                    }
+                });
             });
         }
 
         vertices.on("click", function() {
             const vertexId = parseInt(d3.select(this).attr("data-id"));
-            const isSelected = d3.select(this).classed("selected");
-
-            if (selectedPath.length > 0 && vertexId === selectedPath[selectedPath.length - 1]) {
-                // Remove vertex selection
-                svg.selectAll(".vertex")
-                    .filter(d => d.id === vertexId)
-                    .classed("selected", false);
-
-                if (selectedPath.length > 1) {
-                    const previousVertex = selectedPath[selectedPath.length - 2];
-                    
-                    // Remove the edge from both sets
-                    removeEdgeFromSet(usedEdges, previousVertex, vertexId);
-                    removeEdgeFromSet(selectedEdges, previousVertex, vertexId);
-                    
-                    // Update vertex connections
-                    vertexConnections.set(previousVertex, 
-                        vertexConnections.get(previousVertex) - 1);
-                    vertexConnections.set(vertexId, 
-                        vertexConnections.get(vertexId) - 1);
+            const currentPathData = pathData[currentPath];
+        
+            // Only allow de-selection of the most recently chosen vertex
+            const pathIndex = currentPathData.path.indexOf(vertexId);
+            
+            if (pathIndex !== -1 && vertexId === currentPathData.path[currentPathData.path.length - 1]) {
+                // If vertex is already in the path and it's the most recent one, remove it and update connections
+                currentPathData.path.splice(pathIndex, 1);
+        
+                // Remove used edges that involve this vertex
+                currentPathData.usedEdges = new Set([...currentPathData.usedEdges].filter(e =>
+                    !(e.source === vertexId || e.target === vertexId)
+                ));
+        
+                vertexConnections.set(vertexId, vertexConnections.get(vertexId) - 1);
+                d3.select(this).attr("fill", "lightblue");
+            } else if (pathIndex === -1) {
+                // If the vertex is not already in the path, we can add it if it's a valid next step
+                if (currentPathData.path.length > 0) {
+                    const lastVertex = currentPathData.path[currentPathData.path.length - 1];
+                    if (!findEdge(lastVertex, vertexId)) return;
                 }
-
-                selectedPath.pop();
-                pathList.html(selectedPath.join(" → "));
-                updateEdgeVisibility();
-                return;
-            }
-
-            if (isSelected) return;
-
-            if (selectedPath.length === 0 || 
-                graph.edges.some(e => 
-                    ((e.source == selectedPath[selectedPath.length-1] && e.target == vertexId) ||
-                    (e.target == selectedPath[selectedPath.length-1] && e.source == vertexId)) &&
-                    vertexConnections.get(vertexId) < 2 &&
-                    vertexConnections.get(selectedPath[selectedPath.length-1]) < 2
-                )) {
-                
-                d3.select(this).classed("selected", true);
-                selectedPath.push(vertexId);
-                
-                if (selectedPath.length > 1) {
-                    const lastVertices = selectedPath.slice(-2);
-                    const newEdge = {
+        
+                currentPathData.path.push(vertexId);
+        
+                if (currentPathData.path.length > 1) {
+                    const lastVertices = currentPathData.path.slice(-2);
+                    currentPathData.usedEdges.add({
                         source: lastVertices[0],
                         target: lastVertices[1]
-                    };
-                    usedEdges.add(newEdge);
-                    selectedEdges.add(newEdge);
-                    
-                    vertexConnections.set(lastVertices[0], 
-                        (vertexConnections.get(lastVertices[0]) || 0) + 1);
-                    vertexConnections.set(lastVertices[1], 
-                        (vertexConnections.get(lastVertices[1]) || 0) + 1);
+                    });
+        
+                    vertexConnections.set(lastVertices[0], (vertexConnections.get(lastVertices[0]) || 0) + 1);
+                    vertexConnections.set(lastVertices[1], (vertexConnections.get(lastVertices[1]) || 0) + 1);
                 }
-
-                pathList.html(selectedPath.join(" → "));
-                updateEdgeVisibility();
+        
+                d3.select(this).attr("fill", currentPath);
             }
+        
+            updatePathDisplay();
+            updateEdgeVisibility();
         });
+        
     </script>
     <style>
-        body {
-            display: flex;
-            margin: 0;
-            height: 100vh;
+        body { 
+            display: flex; 
+            margin: 0; 
+            height: 100vh; 
         }
-        #graph-container {
-            width: 70%;
-            overflow-y: auto;
+        #graph-container { 
+            flex-grow: 1; 
+            overflow-y: auto; 
         }
-        #path-container {
-            width: 30%;
+        #control-panel {
+            width: 200px;
             padding: 20px;
             background-color: #f0f0f0;
             display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
+            flex-direction: column;
+            gap: 10px;
         }
-        .vertex {
-            cursor: pointer;
-            transition: fill 0.3s;
+        .vertex { 
+            cursor: pointer; 
+            transition: fill 0.3s; 
         }
-        .vertex.selected {
-            fill: orange;
+        .scrollable-graph { 
+            display: block; 
         }
-        .scrollable-graph {
-            display: block;
+        button {
+            padding: 10px;
+            margin: 5px 0;
         }
     </style>
 </head>
@@ -333,8 +374,13 @@
     <div id="graph-container">
         <div id="graph"></div>
     </div>
-    <div id="path-container">
-        Current Path: <span id="path-list"></span>
+    <div id="control-panel">
+        <div id="path-mode">Current Path: Green</div>
+        <button id="green-switch">Green Path</button>
+        <button id="orange-switch">Orange Path</button>
+        <button id="reset-button">Reset</button>
+        <div>Green Path: <span id="green-path"></span></div>
+        <div>Orange Path: <span id="orange-path"></span></div>
     </div>
 </body>
 </html>
